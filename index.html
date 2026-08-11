@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="color-scheme" content="dark">
-<title>1990 :: 하이텔 접속 단말기</title>
+<title>삼각별 이야기 · 샘이 탐이 꿈이</title>
 <style>
   /* ===== 1990년대 터미널 / PC통신 감성 ===== */
   :root {
@@ -236,7 +236,7 @@
 <div id="crt"></div>
 
 <header>
-  <span class="title" id="title">◆ 1990 온라인 ◆ 하이텔 접속 단말기</span>
+  <span class="title" id="title">◇ 삼각별 이야기 ◇</span>
   <span class="status">
     <select id="persona" class="persona-select" title="퍼소나 선택"></select>
     회선: <b id="conn">대기중</b>
@@ -282,7 +282,7 @@
   </div>
 </section>
 
-<footer>= 1990 =  나는 1990년에 살고 있습니다  = COPYLEFT (c) 1990 =</footer>
+<footer>◇ 삼각별 이야기 ◇  시간의 세 친구 · 샘이 · 탐이 · 꿈이</footer>
 
 <script>
 (function () {
@@ -357,6 +357,7 @@
         ? cards.filter(function (c) { return c && Array.isArray(c.k) && typeof c.t === "string"; })
         : [];
       if (titleEl) titleEl.textContent = persona.title;
+      document.title = (persona.name || "삼각별 이야기") + " · 삼각별 이야기";
       if (personaSelect) personaSelect.value = id;
       storeSetRaw(PERSONA_CHOICE_KEY, id);
     });
