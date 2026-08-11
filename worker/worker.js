@@ -23,22 +23,44 @@
 const OPENAI_URL = "https://api.openai.com/v1/responses"; // GPT-5.6는 Responses API 사용
 const NOTES_MAX = 300; // KV에 퍼소나당 보관할 컨셉 메모 최대 개수
 
+// 허용 도메인(Origin). 공개 입장 시 여기 있는 출처의 브라우저 요청은 암호 없이 통과.
+// 과학관 최종 도메인이 정해지면 여기에 추가하세요. (필요하면 env.ALLOWED_ORIGINS 로 콤마 구분 설정도 지원)
+const DEFAULT_ALLOWED_ORIGINS = [
+  "https://elderlord.github.io",
+  "http://localhost:8099",
+  "http://localhost:8080",
+];
+
+function allowedOrigins(env) {
+  if (env && env.ALLOWED_ORIGINS) {
+    return String(env.ALLOWED_ORIGINS).split(",").map((s) => s.trim()).filter(Boolean);
+  }
+  return DEFAULT_ALLOWED_ORIGINS;
+}
+function isAllowedOrigin(origin, env) {
+  return !!origin && allowedOrigins(env).indexOf(origin) >= 0;
+}
+
 export default {
   async fetch(request, env) {
-    // CORS 프리플라이트
-    if (request.method === "OPTIONS") return new Response(null, { headers: cors() });
-    if (request.method !== "POST") return json({ error: "POST만 허용" }, 405);
+    const origin = request.headers.get("Origin") || "";
+    const originOK = isAllowedOrigin(origin, env);
+
+    // CORS 프리플라이트 — 허용 출처면 그 출처를 반사
+    if (request.method === "OPTIONS") return new Response(null, { headers: cors(origin, originOK) });
+    if (request.method !== "POST") return json({ error: "POST만 허용" }, 405, origin, originOK);
 
     let body;
     try { body = await request.json(); }
-    catch { return json({ error: "JSON 형식 오류" }, 400); }
+    catch { return json({ error: "JSON 형식 오류" }, 400, origin, originOK); }
 
-    // 암호 문지기 (모든 동작 공통)
-    if (body.passphrase !== env.APP_PASSWORD) return json({ error: "접근 거부" }, 401);
+    // 문지기: (1) 허용 도메인의 브라우저 요청이면 통과(공개 입장), 또는 (2) 올바른 암호면 통과(호환).
+    const passOK = body.passphrase === env.APP_PASSWORD;
+    if (!originOK && !passOK) return json({ error: "접근 거부" }, 401, origin, originOK);
 
     // 컨셉 메모 저장/조회 (KV)
     if (body.op === "notes.get" || body.op === "notes.add") {
-      return handleNotes(body, env);
+      return handleNotes(body, env, origin, originOK);
     }
 
     // 기본: OpenAI 채팅 중계 (passphrase는 떼고 payload만 전달)
@@ -54,14 +76,14 @@ export default {
     const data = await upstream.text();
     return new Response(data, {
       status: upstream.status,
-      headers: { ...cors(), "Content-Type": "application/json" },
+      headers: { ...cors(origin, originOK), "Content-Type": "application/json" },
     });
   },
 };
 
 // ===== 컨셉 메모 (KV) =====
-async function handleNotes(body, env) {
-  if (!env.NOTES) return json({ notes: [], error: "no-kv" }); // KV 미설정 시 빈 목록으로 degrade
+async function handleNotes(body, env, origin, originOK) {
+  if (!env.NOTES) return json({ notes: [], error: "no-kv" }, 200, origin, originOK); // KV 미설정 시 빈 목록으로 degrade
 
   const id = String(body.persona || "default").replace(/[^\w.\-]/g, "_");
   const key = "notes:" + id;
@@ -70,7 +92,7 @@ async function handleNotes(body, env) {
   try { notes = JSON.parse(await env.NOTES.get(key)) || []; } catch { notes = []; }
   if (!Array.isArray(notes)) notes = [];
 
-  if (body.op === "notes.get") return json({ notes });
+  if (body.op === "notes.get") return json({ notes }, 200, origin, originOK);
 
   // notes.add — 새 항목만 중복 없이 누적
   const incoming = Array.isArray(body.notes) ? body.notes : [];
@@ -83,19 +105,21 @@ async function handleNotes(body, env) {
   }
   if (notes.length > NOTES_MAX) notes = notes.slice(notes.length - NOTES_MAX);
   if (added > 0) await env.NOTES.put(key, JSON.stringify(notes));
-  return json({ notes, added });
+  return json({ notes, added }, 200, origin, originOK);
 }
 
-function cors() {
+// 허용 출처면 그 출처를 반사(도메인 제한), 아니면 "null"로 브라우저 읽기를 막음
+function cors(origin, originOK) {
   return {
-    "Access-Control-Allow-Origin": "*", // 나중에 내 github.io 주소로 좁혀도 됨
+    "Access-Control-Allow-Origin": originOK ? origin : "null",
+    "Vary": "Origin",
     "Access-Control-Allow-Methods": "POST, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type",
   };
 }
 
-function json(obj, status = 200) {
+function json(obj, status = 200, origin = "", originOK = false) {
   return new Response(JSON.stringify(obj), {
-    status, headers: { ...cors(), "Content-Type": "application/json" },
+    status, headers: { ...cors(origin, originOK), "Content-Type": "application/json" },
   });
 }

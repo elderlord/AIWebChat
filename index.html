@@ -295,6 +295,11 @@
   var STORAGE_KEY = "retro1990.pass";
   var PERSONA_CHOICE_KEY = "retro1990.persona";
 
+  // 공개 입장: 암호 화면 없이 관람객이 바로 시작. 보안 경계는 Worker의 도메인(Origin) 제한.
+  // (DEFAULT_PASSPHRASE 는 현재 Worker 통과용. Origin 제한을 켠 Worker에선 무시됨.)
+  var OPEN_ACCESS = true;
+  var DEFAULT_PASSPHRASE = "retro1990";
+
   // ===== 퍼소나 (personas/<id>/persona.json + lore.json 에서 로드) =====
   var PERSONA_INDEX = "personas/index.json";
   var personaList = [];   // [{id,name,dir}]
@@ -342,6 +347,7 @@
         id: id,
         name: pj.name || entry.name || id,
         handle: pj.handle || "상대",
+        color: pj.color || "",   // 캐릭터 색(디자인 가이드 확정 시 사용). 지금은 저장만.
         title: pj.title || "◆ 1990 온라인 ◆",
         greeting: asText(pj.greeting) || "＊ 상대가 접속해 있습니다. 인사를 건네보세요. (Enter 로 전송)",
         system: asText(pj.system)
@@ -588,7 +594,9 @@
     sendBtn.disabled = false;
     inputEl.focus();
 
-    addMsg("sys", "", "＊ 삐----삐----치지지직 ... 호스트에 연결되었습니다. (" + new Date().getFullYear() + "년 회선 아님, 1990년 모드)");
+    if (!OPEN_ACCESS) {
+      addMsg("sys", "", "＊ 삐----삐----치지지직 ... 호스트에 연결되었습니다. (" + new Date().getFullYear() + "년 회선 아님, 1990년 모드)");
+    }
     if (history.length) {
       addMsg("sys", "", "＊ 지난 대화를 불러왔어요. 이어서 얘기하세요.  (명령: /메모  /메모지우기  /대화지우기)");
       renderHistory();
@@ -871,6 +879,13 @@
     // 퍼소나(매니페스트+활성 퍼소나) 로드 후 → 그 퍼소나의 대화/기억 복원 → 자동접속
     loadPersonas().then(function () {
       loadConv(); // 지난 대화·기억 복원 (활성 퍼소나 기준)
+      if (OPEN_ACCESS) {
+        // 공개 입장: 암호 화면 건너뛰고 바로 접속
+        rememberEl.checked = false;
+        passEl.value = DEFAULT_PASSPHRASE;
+        connect();
+        return;
+      }
       var saved = storeGet();
       if (saved) {
         passEl.value = saved;
