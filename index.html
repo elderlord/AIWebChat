@@ -347,6 +347,18 @@
   var history = [];
   var busy = false;
 
+  // ===== 기억(대화하며 자동 누적) 설정 =====
+  var HISTORY_KEY = "retro1990.history";
+  var MEMORY_KEY  = "retro1990.memory";
+  var MARK_KEY    = "retro1990.mark";    // 자동추출을 이미 끝낸 history 길이
+  var SEND_MAX    = 20;    // 모델에 보낼 최근 대화 메시지 수(비용 상한). 더 오래된 맥락은 '기억'이 backfill
+  var WINDOW_MSGS = 10;    // 자동추출이 참고할 최근 메시지 수 (window)
+  var EXTRACT_EVERY = 6;   // 이만큼(메시지) 쌓일 때마다 한 번 자동추출 (주기)
+  var MEMORY_MAX  = 60;    // 기억 최대 개수 (초과 시 오래된 것부터 삭제)
+
+  var memory = [];         // ["사실1", "사실2", ...]
+  var mark = 0;            // 이미 자동추출에 반영된 history 길이
+
   // ===== DOM =====
   var $ = function (id) { return document.getElementById(id); };
   var loginEl = $("login"), chatEl = $("chat"), logEl = $("log");
@@ -358,6 +370,33 @@
   function storeGet() { try { return localStorage.getItem(STORAGE_KEY); } catch (e) { return null; } }
   function storeSet(v) { try { localStorage.setItem(STORAGE_KEY, v); } catch (e) {} }
   function storeClear() { try { localStorage.removeItem(STORAGE_KEY); } catch (e) {} }
+
+  // 대화·기억 저장/복원 (이 브라우저에만)
+  function saveConv() {
+    try {
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
+      localStorage.setItem(MEMORY_KEY, JSON.stringify(memory));
+      localStorage.setItem(MARK_KEY, String(mark));
+    } catch (e) {}
+  }
+  function loadConv() {
+    try {
+      var h = JSON.parse(localStorage.getItem(HISTORY_KEY) || "null");
+      if (Array.isArray(h)) history = h;
+      var m = JSON.parse(localStorage.getItem(MEMORY_KEY) || "null");
+      if (Array.isArray(m)) memory = m;
+      var k = parseInt(localStorage.getItem(MARK_KEY) || "0", 10);
+      if (!isNaN(k)) mark = k;
+    } catch (e) {}
+  }
+  function clearConv() {
+    history = []; mark = 0;
+    saveConv();
+  }
+  function clearMemory() {
+    memory = [];
+    saveConv();
+  }
 
   // ===== 유틸 =====
   function scrollBottom() { logEl.scrollTop = logEl.scrollHeight; }
@@ -450,7 +489,20 @@
     inputEl.focus();
 
     addMsg("sys", "", "＊ 삐----삐----치지지직 ... 호스트에 연결되었습니다. (" + new Date().getFullYear() + "년 회선 아님, 1990년 모드)");
-    addMsg("sys", "", "＊ 상대가 접속해 있습니다. 인사를 건네보세요. (Enter 로 전송)");
+    if (history.length) {
+      addMsg("sys", "", "＊ 지난 대화를 불러왔어요. 이어서 얘기하세요.  (명령: /기억  /기억지우기  /대화지우기)");
+      renderHistory();
+    } else {
+      addMsg("sys", "", "＊ 상대가 접속해 있습니다. 인사를 건네보세요. (Enter 로 전송)");
+    }
+  }
+
+  function renderHistory() {
+    for (var i = 0; i < history.length; i++) {
+      var m = history[i];
+      if (m.role === "user") addMsg("user", "나 > ", m.content);
+      else if (m.role === "assistant") addMsg("bot", "상대 > ", m.content);
+    }
   }
 
   // ===== 메시지 전송 =====
@@ -459,16 +511,31 @@
     var text = inputEl.value.trim();
     if (!text) return;
 
+    // 슬래시 명령 (/기억, /기억지우기, /대화지우기, /도움)
+    if (text.charAt(0) === "/") {
+      inputEl.value = "";
+      handleCommand(text);
+      return;
+    }
+
     inputEl.value = "";
     addMsg("user", "나 > ", text);
     history.push({ role: "user", content: text });
+    saveConv();
 
     setBusy(true);
     var typing = addMsg("bot", "상대 > ", "");
     typing.parentNode.classList.add("cursor");
 
-    // 간이 RAG: 이번 발화에 걸리는 1990 자료를 골라 컨텍스트로 주입
+    // 컨텍스트 구성: 퍼소나 + (누적 기억) + (1990 자료) + 최근 대화
     var sys = [{ role: "system", content: SYSTEM_PROMPT }];
+    if (memory.length) {
+      sys.push({
+        role: "system",
+        content: "[기억하는 것들 · 지난 대화에서] 이미 알고 있는 사람처럼 자연스럽게 반영하라(목록을 그대로 읊지 말 것):\n"
+          + memory.map(function (x) { return "- " + x; }).join("\n")
+      });
+    }
     var lore = retrieveLore(text, 3);
     if (lore) {
       sys.push({
@@ -481,7 +548,7 @@
       passphrase: passphrase,
       payload: {
         model: MODEL,
-        input: sys.concat(history)
+        input: sys.concat(history.slice(-SEND_MAX)) // 최근 대화만 전송(비용 상한); 오래된 맥락은 '기억'이 backfill
       }
     };
 
@@ -520,7 +587,9 @@
         return;
       }
       history.push({ role: "assistant", content: answer });
+      saveConv();
       typeOut(typing, answer);
+      maybeExtractMemory(); // 주기 도달 시 최근 window에서 자동 추출 (백그라운드)
     })
     .catch(function (e) {
       typing.parentNode.classList.remove("cursor");
@@ -558,10 +627,94 @@
     if (!b) inputEl.focus();
   }
 
+  // ===== 슬래시 명령 =====
+  function handleCommand(cmd) {
+    var c = cmd.trim().toLowerCase();
+    if (c === "/기억" || c === "/memory") {
+      if (!memory.length) { addMsg("sys", "", "＊ 아직 기억해둔 게 없어요."); return; }
+      addMsg("sys", "", "＊ 지금 기억하는 것들 (" + memory.length + "개):\n" +
+        memory.map(function (x, i) { return "  " + (i + 1) + ". " + x; }).join("\n"));
+      return;
+    }
+    if (c === "/기억지우기" || c === "/기억삭제") {
+      clearMemory();
+      addMsg("sys", "", "＊ 기억을 모두 지웠어요.");
+      return;
+    }
+    if (c === "/대화지우기" || c === "/대화초기화") {
+      clearConv();
+      logEl.innerHTML = "";
+      addMsg("sys", "", "＊ 대화를 초기화했어요. (기억은 그대로 남아있어요) 다시 인사해보세요.");
+      return;
+    }
+    if (c === "/도움" || c === "/help" || c === "/?") {
+      addMsg("sys", "", "＊ 명령: /기억 (기억 보기)   /기억지우기   /대화지우기");
+      return;
+    }
+    addMsg("sys", "", "＊ 모르는 명령이에요. /도움 을 쳐보세요.");
+  }
+
+  // ===== 기억 자동추출 (주기 도달 시에만) =====
+  function maybeExtractMemory() {
+    if (!passphrase) return;
+    if (history.length - mark < EXTRACT_EVERY) return; // 아직 주기 안 됨
+    extractMemory();
+  }
+
+  function extractMemory() {
+    var upTo = history.length;
+    var windowMsgs = history.slice(Math.max(0, history.length - WINDOW_MSGS));
+    if (windowMsgs.length < 2) { mark = upTo; saveConv(); return; }
+    var transcript = windowMsgs.map(function (m) {
+      return (m.role === "user" ? "상대" : "새벽별") + ": " + m.content;
+    }).join("\n");
+    var known = memory.length
+      ? ("이미 기억 중(중복으로 다시 쓰지 말 것):\n" + memory.map(function (x) { return "- " + x; }).join("\n") + "\n\n")
+      : "";
+    var exSys = "너는 채팅 로그에서 '앞으로도 계속 유효한, 기억해둘 사실'만 뽑는 도구다. "
+      + "상대(사용자)에 대한 정보·이름·취향·약속·두 사람이 합의한 설정 등을 한 줄에 하나씩 아주 짧게 적어라. "
+      + "일시적 잡담·인사·질문·이미 기억 중인 것은 제외한다. 새로 기억할 게 없으면 아무것도 쓰지 마라. 설명·머리말 없이 목록만.";
+    var reqBody = {
+      passphrase: passphrase,
+      payload: {
+        model: MODEL,
+        input: [
+          { role: "system", content: exSys },
+          { role: "user", content: known + "대화:\n" + transcript }
+        ]
+      }
+    };
+    fetch(PROXY_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(reqBody) })
+      .then(function (res) { return res.ok ? res.json() : null; })
+      .then(function (data) {
+        var added = data ? mergeMemory(extractText(data)) : 0;
+        mark = upTo;
+        saveConv();
+        if (added > 0) addMsg("sys", "", "＊ 기억 갱신 (+" + added + ") · 총 " + memory.length + "개   (/기억 으로 보기)");
+      })
+      .catch(function () { /* 실패해도 무시 — 다음 주기에 다시 시도 */ });
+  }
+
+  function mergeMemory(text) {
+    if (!text) return 0;
+    var lines = text.split(/\r?\n/), added = 0;
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i].replace(/^[\s\-\*•\d.\)\]]+/, "").trim();
+      if (!line || line.length < 2) continue;
+      if (line.length > 200) line = line.slice(0, 200);
+      var dup = false;
+      for (var j = 0; j < memory.length; j++) {
+        if (memory[j].toLowerCase() === line.toLowerCase()) { dup = true; break; }
+      }
+      if (!dup) { memory.push(line); added++; }
+    }
+    if (memory.length > MEMORY_MAX) memory = memory.slice(memory.length - MEMORY_MAX);
+    return added;
+  }
+
   function lockOut() {
     passphrase = null;
-    history = [];
-    storeClear(); // 틀린 암호는 기억에서 지움
+    storeClear(); // 틀린 암호(비밀번호)만 지움 — 대화·기억은 보존
     inputEl.disabled = true;
     sendBtn.disabled = true;
     connEl.textContent = "차단됨";
@@ -589,6 +742,7 @@
   // ===== 초기화 =====
   (function init() {
     loadLore(); // 1990 지식 카드 로드 (비동기; 실패해도 앱은 동작)
+    loadConv(); // 지난 대화·기억 복원
     var saved = storeGet();
     if (saved) {
       passEl.value = saved;
