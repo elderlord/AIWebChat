@@ -152,6 +152,11 @@
   }
   button:hover:not(:disabled) { background: var(--green-dim); color: #041008; }
   button:disabled { opacity: 0.5; cursor: wait; }
+  #login .remember {
+    display: flex; align-items: center; gap: 8px;
+    margin-top: 16px; color: var(--green-dim); font-size: 13px; cursor: pointer;
+  }
+  #login .remember input { accent-color: var(--green-dim); cursor: pointer; }
   #login .err { color: var(--red); min-height: 18px; margin-top: 12px; font-size: 13px; }
   #login .hint { color: var(--green-dim); font-size: 11px; margin-top: 14px; opacity: 0.7; }
 
@@ -240,9 +245,13 @@
       <span class="prompt">PASSWD:</span>
       <input type="password" id="pass" autocomplete="off" spellcheck="false" placeholder="········">
     </div>
+    <label class="remember">
+      <input type="checkbox" id="remember" checked>
+      <span>이 기기에서 암호 기억 (다음부턴 자동 접속)</span>
+    </label>
     <button id="connectBtn">■ 접 속 (CONNECT)</button>
     <div class="err" id="loginErr"></div>
-    <div class="hint">암호는 이 브라우저 메모리에만 보관되며 저장·전송되지 않습니다.</div>
+    <div class="hint">기억을 켜면 이 브라우저에만 저장됩니다(코드·서버엔 안 올라감). 끄면 이번만 쓰고 잊습니다.</div>
   </div>
 </section>
 
@@ -274,7 +283,9 @@
     "가끔 그 시절 유행어나 채팅 말투(예: ^^, ㅎㅎ, 반갑구여)를 자연스럽게 섞어라. " +
     "답변은 너무 길지 않게, 채팅답게 짧고 편하게 한다.";
 
-  // 암호는 메모리에만 (하드코딩 금지)
+  var STORAGE_KEY = "retro1990.pass";
+
+  // 암호는 메모리 + (선택 시) 이 브라우저 localStorage 에만 (코드/서버엔 하드코딩 금지)
   var passphrase = null;
   // 대화 기록 (Responses API input 배열). system 은 매 요청 시 앞에 붙인다.
   var history = [];
@@ -285,6 +296,12 @@
   var loginEl = $("login"), chatEl = $("chat"), logEl = $("log");
   var passEl = $("pass"), connectBtn = $("connectBtn"), loginErr = $("loginErr");
   var inputEl = $("input"), sendBtn = $("sendBtn"), connEl = $("conn");
+  var rememberEl = $("remember");
+
+  // ===== localStorage (사생활 모드 등에서 실패해도 무시) =====
+  function storeGet() { try { return localStorage.getItem(STORAGE_KEY); } catch (e) { return null; } }
+  function storeSet(v) { try { localStorage.setItem(STORAGE_KEY, v); } catch (e) {} }
+  function storeClear() { try { localStorage.removeItem(STORAGE_KEY); } catch (e) {} }
 
   // ===== 유틸 =====
   function scrollBottom() { logEl.scrollTop = logEl.scrollHeight; }
@@ -346,6 +363,8 @@
     if (!pw) { loginErr.textContent = "암호를 입력하세요."; passEl.focus(); return; }
     passphrase = pw;
     loginErr.textContent = "";
+    // 기억 옵션: 켜져 있으면 이 브라우저에 저장, 꺼져 있으면 지움
+    if (rememberEl.checked) storeSet(pw); else storeClear();
     // 로그인 화면 전환 (진짜 인증은 첫 메시지에서 확인됨)
     loginEl.style.display = "none";
     chatEl.style.display = "flex";
@@ -454,6 +473,7 @@
   function lockOut() {
     passphrase = null;
     history = [];
+    storeClear(); // 틀린 암호는 기억에서 지움
     inputEl.disabled = true;
     sendBtn.disabled = true;
     connEl.textContent = "차단됨";
@@ -478,7 +498,17 @@
     if (e.key === "Enter") { e.preventDefault(); send(); }
   });
 
-  passEl.focus();
+  // ===== 초기화: 기억된 암호가 있으면 자동 접속 =====
+  (function init() {
+    var saved = storeGet();
+    if (saved) {
+      passEl.value = saved;
+      rememberEl.checked = true;
+      connect(); // 바로 접속 (실제 인증은 첫 메시지에서; 틀리면 자동으로 로그인 화면 복귀 + 기억 삭제)
+    } else {
+      passEl.focus();
+    }
+  })();
 })();
 </script>
 </body>
