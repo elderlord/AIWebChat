@@ -1,8 +1,11 @@
 {
   "version": 1,
   "note": "퍼소나 목록. 새 퍼소나는 personas/<id>/ 폴더(persona.json + lore.json)를 만들고 여기 한 줄 추가하면 됩니다. default = 처음 열 때 기본 퍼소나.",
-  "default": "seoul-1990",
+  "default": "saemi",
   "personas": [
+    { "id": "saemi", "name": "샘이 · 과거의 빛", "dir": "personas/saemi" },
+    { "id": "tami", "name": "탐이 · 현재의 빛", "dir": "personas/tami" },
+    { "id": "kkumi", "name": "꿈이 · 미래의 빛", "dir": "personas/kkumi" },
     { "id": "seoul-1990", "name": "새벽별 · 1990 서울", "dir": "personas/seoul-1990" },
     { "id": "mansu-1990", "name": "만수 형 · 1990 동네", "dir": "personas/mansu-1990" }
   ]
