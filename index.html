@@ -357,6 +357,25 @@
     return "";
   }
 
+  // 서버 에러 응답을 사람이 읽을 문자열로
+  function errText(data, status) {
+    if (data && data.error != null) {
+      var e = data.error;
+      if (typeof e === "string") return e;
+      if (e.message) return e.message + (e.type ? " (" + e.type + ")" : "");
+      try { return JSON.stringify(e); } catch (x) {}
+    }
+    if (data) { try { return JSON.stringify(data).slice(0, 400); } catch (x) {} }
+    return "HTTP " + status;
+  }
+
+  // 문지기(암호) 거부인지 판별: Worker 가 {"error":"접근 거부"} 를 반환
+  function isGatekeeperReject(status, data) {
+    if (status !== 401) return false;
+    var e = data && data.error;
+    return typeof e === "string" && e.indexOf("거부") >= 0;
+  }
+
   // ===== 접속 =====
   function connect() {
     var pw = passEl.value;
@@ -412,17 +431,20 @@
     })
     .then(function (r) {
       typing.parentNode.classList.remove("cursor");
-      if (r.status === 401) {
+      // 진짜 암호 거부일 때만 잠금 (Worker: {"error":"접근 거부"})
+      if (isGatekeeperReject(r.status, r.data)) {
         typing.parentNode.remove();
-        addMsg("err", "＊ ", "암호가 틀렸습니다. 접속이 거부되었습니다. 새로고침 후 다시 접속하세요.");
-        // 암호 무효화 -> 로그인으로
+        addMsg("err", "＊ ", "암호가 틀렸습니다. 접속이 거부되었습니다. 다시 접속하세요.");
         lockOut();
         return;
       }
       if (!r.ok || !r.data) {
         typing.parentNode.remove();
-        var em = (r.data && r.data.error) ? r.data.error : ("서버 오류 (HTTP " + r.status + ")");
-        addMsg("err", "＊ ", "회선 잡음: " + em);
+        // 401 이지만 문지기 거부가 아니면 대개 OpenAI 쪽 문제(키/모델 등)
+        var hint = (r.status === 401)
+          ? "  (암호는 통과했지만 OpenAI가 거부했어요 — API 키·크레딧·모델 접근을 확인하세요.)"
+          : "";
+        addMsg("err", "＊ ", "회선 잡음 [HTTP " + r.status + "] " + errText(r.data, r.status) + hint);
         return;
       }
       var answer = extractText(r.data);
