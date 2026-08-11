@@ -551,7 +551,7 @@
 
     addMsg("sys", "", "＊ 삐----삐----치지지직 ... 호스트에 연결되었습니다. (" + new Date().getFullYear() + "년 회선 아님, 1990년 모드)");
     if (history.length) {
-      addMsg("sys", "", "＊ 지난 대화를 불러왔어요. 이어서 얘기하세요.  (명령: /기억  /기억지우기  /대화지우기)");
+      addMsg("sys", "", "＊ 지난 대화를 불러왔어요. 이어서 얘기하세요.  (명령: /메모  /메모지우기  /대화지우기)");
       renderHistory();
     } else {
       addMsg("sys", "", persona.greeting);
@@ -593,7 +593,7 @@
     if (memory.length) {
       sys.push({
         role: "system",
-        content: "[기억하는 것들 · 지난 대화에서] 이미 알고 있는 사람처럼 자연스럽게 반영하라(목록을 그대로 읊지 말 것):\n"
+        content: "[컨셉 메모 · 지난 대화에서 확립된 설정·고증] 아래를 일관되게 지키며, 원래 그렇게 살아온 사람처럼 자연스럽게 반영하라(목록을 그대로 읊지 말 것):\n"
           + memory.map(function (x) { return "- " + x; }).join("\n")
       });
     }
@@ -691,25 +691,33 @@
   // ===== 슬래시 명령 =====
   function handleCommand(cmd) {
     var c = cmd.trim().toLowerCase();
-    if (c === "/기억" || c === "/memory") {
-      if (!memory.length) { addMsg("sys", "", "＊ 아직 기억해둔 게 없어요."); return; }
-      addMsg("sys", "", "＊ 지금 기억하는 것들 (" + memory.length + "개):\n" +
+    if (c === "/메모" || c === "/기억" || c === "/memory") {
+      if (!memory.length) { addMsg("sys", "", "＊ 아직 쌓인 컨셉 메모가 없어요."); return; }
+      addMsg("sys", "", "＊ 지금 쌓인 컨셉 메모 (" + memory.length + "개) — " + persona.name + ":\n" +
         memory.map(function (x, i) { return "  " + (i + 1) + ". " + x; }).join("\n"));
       return;
     }
-    if (c === "/기억지우기" || c === "/기억삭제") {
+    if (c === "/메모내보내기" || c === "/내보내기" || c === "/export") {
+      if (!memory.length) { addMsg("sys", "", "＊ 내보낼 컨셉 메모가 없어요."); return; }
+      // lore.json 카드로 승격하기 좋게 JSON 스니펫으로 출력 (복사해서 personas/<id>/lore.json 에 붙여넣기)
+      var card = { cat: "학습", k: ["__키워드를_채우세요__"], t: memory.join(" / ") };
+      addMsg("sys", "", "＊ lore.json 승격용 스니펫 (키워드만 채워 personas/" + persona.id + "/lore.json 의 cards 에 추가):\n"
+        + JSON.stringify(card, null, 2));
+      return;
+    }
+    if (c === "/메모지우기" || c === "/기억지우기" || c === "/기억삭제") {
       clearMemory();
-      addMsg("sys", "", "＊ 기억을 모두 지웠어요.");
+      addMsg("sys", "", "＊ 컨셉 메모를 모두 지웠어요.");
       return;
     }
     if (c === "/대화지우기" || c === "/대화초기화") {
       clearConv();
       logEl.innerHTML = "";
-      addMsg("sys", "", "＊ 대화를 초기화했어요. (기억은 그대로 남아있어요) 다시 인사해보세요.");
+      addMsg("sys", "", "＊ 대화를 초기화했어요. (컨셉 메모는 그대로 남아있어요) 다시 인사해보세요.");
       return;
     }
     if (c === "/도움" || c === "/help" || c === "/?") {
-      addMsg("sys", "", "＊ 명령: /기억 (기억 보기)   /기억지우기   /대화지우기");
+      addMsg("sys", "", "＊ 명령: /메모 (컨셉 메모 보기)   /메모내보내기   /메모지우기   /대화지우기");
       return;
     }
     addMsg("sys", "", "＊ 모르는 명령이에요. /도움 을 쳐보세요.");
@@ -731,11 +739,15 @@
       return (m.role === "user" ? "상대" : handle) + ": " + m.content;
     }).join("\n");
     var known = memory.length
-      ? ("이미 기억 중(중복으로 다시 쓰지 말 것):\n" + memory.map(function (x) { return "- " + x; }).join("\n") + "\n\n")
+      ? ("이미 메모됨(중복으로 다시 쓰지 말 것):\n" + memory.map(function (x) { return "- " + x; }).join("\n") + "\n\n")
       : "";
-    var exSys = "너는 채팅 로그에서 '앞으로도 계속 유효한, 기억해둘 사실'만 뽑는 도구다. "
-      + "상대(사용자)에 대한 정보·이름·취향·약속·두 사람이 합의한 설정 등을 한 줄에 하나씩 아주 짧게 적어라. "
-      + "일시적 잡담·인사·질문·이미 기억 중인 것은 제외한다. 새로 기억할 게 없으면 아무것도 쓰지 마라. 설명·머리말 없이 목록만.";
+    var exSys = "너는 '1990년 컨셉 채팅'의 몰입도와 일관성을 높이기 위한 컨셉 메모를 정리하는 도구다. "
+      + "아래 대화에서 이 캐릭터가 앞으로도 일관되게 지켜야 할 것만 뽑아라: "
+      + "(1) 이 대화에서 확립된 캐릭터·세계 설정(이름·장소·관계·습관·사연 등), "
+      + "(2) 등장한 1990년 시대 고증 디테일, "
+      + "(3) 상대가 알려준 그 시절 사실이나 정정. "
+      + "상대(사용자)의 현대 개인정보·일상·취향은 넣지 마라. 미래(1990년 이후) 사실은 절대 넣지 마라. "
+      + "한 줄에 하나 아주 짧게. 새로 메모할 게 없으면 아무것도 쓰지 마라. 설명·머리말 없이 목록만.";
     var reqBody = {
       passphrase: passphrase,
       payload: {
@@ -752,7 +764,7 @@
         var added = data ? mergeMemory(extractText(data)) : 0;
         mark = upTo;
         saveConv();
-        if (added > 0) addMsg("sys", "", "＊ 기억 갱신 (+" + added + ") · 총 " + memory.length + "개   (/기억 으로 보기)");
+        if (added > 0) addMsg("sys", "", "＊ 컨셉 메모 +" + added + " · 총 " + memory.length + "개   (/메모 로 보기)");
       })
       .catch(function () { /* 실패해도 무시 — 다음 주기에 다시 시도 */ });
   }
