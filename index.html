@@ -373,6 +373,7 @@
     loadPersona(id).then(function () {
       history = []; memory = []; mark = 0;
       loadConv();
+      if (passphrase) syncNotesFromServer(persona.id); // 이 퍼소나의 서버 메모 합치기
       if (chatEl && chatEl.style.display !== "none") {
         logEl.innerHTML = "";
         addMsg("sys", "", "＊ 퍼소나 전환 → " + persona.name);
@@ -457,6 +458,44 @@
   function clearMemory() {
     memory = [];
     saveConv();
+  }
+
+  // ===== 컨셉 메모 서버 동기화 (Worker KV) — 실패하면 조용히 로컬만 사용 =====
+  function mergeUnique(base, extra) {
+    var out = base.slice();
+    for (var i = 0; i < extra.length; i++) {
+      var v = String(extra[i] || "").trim();
+      if (!v) continue;
+      var dup = false;
+      for (var j = 0; j < out.length; j++) { if (out[j].toLowerCase() === v.toLowerCase()) { dup = true; break; } }
+      if (!dup) out.push(v);
+    }
+    if (out.length > MEMORY_MAX) out = out.slice(out.length - MEMORY_MAX);
+    return out;
+  }
+  function serverNotesGet(id) {
+    if (!passphrase) return Promise.resolve(null);
+    return fetch(PROXY_URL, { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ op: "notes.get", passphrase: passphrase, persona: id }) })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (d) { return d && Array.isArray(d.notes) ? d.notes : null; })
+      .catch(function () { return null; });
+  }
+  function serverNotesAdd(id, notes) {
+    if (!passphrase || !notes || !notes.length) return Promise.resolve(null);
+    return fetch(PROXY_URL, { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ op: "notes.add", passphrase: passphrase, persona: id, notes: notes }) })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (d) { return d && Array.isArray(d.notes) ? d.notes : null; })
+      .catch(function () { return null; });
+  }
+  // 접속/전환 시 서버 메모를 불러와 로컬과 합침 (서버 미지원이면 로컬 유지)
+  function syncNotesFromServer(id) {
+    serverNotesGet(id).then(function (serverNotes) {
+      if (!serverNotes || persona.id !== id) return;
+      memory = mergeUnique(memory, serverNotes);
+      saveConv();
+    });
   }
 
   // ===== 유틸 =====
@@ -556,6 +595,7 @@
     } else {
       addMsg("sys", "", persona.greeting);
     }
+    syncNotesFromServer(persona.id); // 서버(KV)에 쌓인 컨셉 메모 합치기
   }
 
   function renderHistory() {
@@ -761,17 +801,27 @@
     fetch(PROXY_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(reqBody) })
       .then(function (res) { return res.ok ? res.json() : null; })
       .then(function (data) {
-        var added = data ? mergeMemory(extractText(data)) : 0;
+        var addedArr = data ? mergeMemory(extractText(data)) : [];
         mark = upTo;
         saveConv();
-        if (added > 0) addMsg("sys", "", "＊ 컨셉 메모 +" + added + " · 총 " + memory.length + "개   (/메모 로 보기)");
+        if (addedArr.length > 0) {
+          addMsg("sys", "", "＊ 컨셉 메모 +" + addedArr.length + " · 총 " + memory.length + "개   (/메모 로 보기)");
+          // 서버(KV)에 누적 → 모든 기기 공유. 성공 시 서버본을 정본으로 반영
+          var pid = persona.id;
+          serverNotesAdd(pid, addedArr).then(function (serverNotes) {
+            if (serverNotes && persona.id === pid) {
+              memory = serverNotes.length > MEMORY_MAX ? serverNotes.slice(serverNotes.length - MEMORY_MAX) : serverNotes;
+              saveConv();
+            }
+          });
+        }
       })
       .catch(function () { /* 실패해도 무시 — 다음 주기에 다시 시도 */ });
   }
 
   function mergeMemory(text) {
-    if (!text) return 0;
-    var lines = text.split(/\r?\n/), added = 0;
+    if (!text) return [];
+    var lines = text.split(/\r?\n/), addedArr = [];
     for (var i = 0; i < lines.length; i++) {
       var line = lines[i].replace(/^[\s\-\*•\d.\)\]]+/, "").trim();
       if (!line || line.length < 2) continue;
@@ -780,10 +830,10 @@
       for (var j = 0; j < memory.length; j++) {
         if (memory[j].toLowerCase() === line.toLowerCase()) { dup = true; break; }
       }
-      if (!dup) { memory.push(line); added++; }
+      if (!dup) { memory.push(line); addedArr.push(line); }
     }
     if (memory.length > MEMORY_MAX) memory = memory.slice(memory.length - MEMORY_MAX);
-    return added;
+    return addedArr;
   }
 
   function lockOut() {

@@ -17,6 +17,62 @@
   - 프론트 요청에 OpenAI API 키를 붙여 중계. 키는 Worker 안에만 존재, 브라우저에 노출 안 됨.
   - Worker 시크릿: `OPENAI_API_KEY`, `APP_PASSWORD`(문지기 암호)
 
+## 퍼소나 (다중 · 폴더 단위)
+
+퍼소나는 `personas/` 아래 폴더 단위로 관리합니다.
+
+```
+personas/
+  index.json              # 목록 매니페스트 (+ default 퍼소나)
+  seoul-1990/
+    persona.json          # id·이름·대화명(handle)·헤더제목(title)·인사(greeting)·system 프롬프트
+    lore.json             # 이 퍼소나의 지식 카드(간이 RAG)
+  mansu-1990/ ...
+  _template/              # 새 퍼소나용 복붙 템플릿 (앞에 _ 라 목록에 안 뜸)
+```
+
+**퍼소나 추가법**
+1. `personas/_template/`를 복사해 `personas/<새id>/` 로 만들고 `persona.json`(+선택 `lore.json`) 내용을 채운다.
+   - `persona.json`의 `system`은 문자열 또는 **줄 배열**(권장, 읽기 편함) 둘 다 됨.
+2. `personas/index.json`의 `personas` 배열에 한 줄 추가: `{ "id": "<새id>", "name": "표시이름", "dir": "personas/<새id>" }`
+3. 커밋 → 자동배포. 헤더 드롭다운에 새 퍼소나가 뜬다.
+
+헤더 드롭다운으로 전환하면 system 프롬프트·지식카드·대화·컨셉 메모가 **퍼소나별로** 통째로 바뀝니다.
+
+## 세션(대화)·컨셉 메모
+
+- **대화·컨셉 메모는 퍼소나별로 저장**됩니다.
+  - 브라우저: `localStorage`(`retro1990.<personaId>.history/.memory/.mark`) → 새로고침해도 대화 이어짐.
+  - 서버(선택): Worker **KV**에 컨셉 메모를 누적 → 모든 기기가 공유(아래 KV 설정).
+- **컨셉 메모(자동 축적)**: 대화 window(최근 10개)에서 **6메시지마다 한 번** 모델로
+  "컨셉 충실도를 높이는 정보"(이 대화에서 확립된 캐릭터·세계 설정, 등장한 1990년 고증 디테일,
+  사용자가 알려준 그 시절 사실·정정)를 추출해 누적. 사용자 현대 개인정보/미래 사실은 제외.
+  다음 요청에 `[컨셉 메모]`로 주입해 일관성·몰입을 높인다.
+- **명령어**: `/메모`(보기) · `/메모내보내기`(lore.json 카드 스니펫으로 출력) · `/메모지우기` · `/대화지우기` · `/도움`
+
+## Worker (프록시 + 컨셉 메모 KV)
+
+Worker 코드는 `worker/worker.js`에 있습니다(레포에서 버전관리). 하는 일:
+1. 프론트 요청에 `OPENAI_API_KEY`를 붙여 OpenAI(Responses API)로 중계
+2. `op: "notes.get" | "notes.add"` 요청 시 퍼소나별 컨셉 메모를 **KV**에 조회/누적
+
+**바인딩/시크릿**: `OPENAI_API_KEY`(Secret), `APP_PASSWORD`(Secret), `NOTES`(KV 바인딩).
+
+### KV 자동축적 켜기 (한 번만)
+```bash
+# 1) KV 네임스페이스 생성
+npx wrangler kv namespace create NOTES
+#    → 출력된 id 를 wrangler.toml 에 추가:
+#        [[kv_namespaces]]
+#        binding = "NOTES"
+#        id = "출력된_id"
+# 2) worker/worker.js 내용을 배포
+npx wrangler deploy
+```
+또는 대시보드: **Worker → Settings → Bindings → Add → KV namespace**, Variable name = `NOTES`,
+새 네임스페이스 선택 → **Deploy**. (프론트는 KV/새 Worker가 없으면 자동으로 로컬 저장만 사용하므로,
+순서 상관없이 안전하게 전환됩니다.)
+
 ## 프록시 호출 규약
 
 - 메서드: `POST`, `Content-Type: application/json`
