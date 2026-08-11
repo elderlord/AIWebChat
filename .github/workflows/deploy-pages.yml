@@ -1,0 +1,43 @@
+name: Deploy to GitHub Pages
+
+# 이 브랜치에 push 될 때마다 자동 배포. 수동 실행(workflow_dispatch)도 가능.
+# ※ 동작하려면 레포 Settings → Pages → Source 를 "GitHub Actions" 로 설정해야 함.
+on:
+  push:
+    branches:
+      - claude/retro-1990-chat-webapp-hyxa8c
+  workflow_dispatch:
+
+# Pages 배포에 필요한 권한
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# 동시에 하나의 배포만: 새 push 가 오면 진행 중인 오래된 배포는 취소
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload site artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          # 레포 루트 전체(index.html 등)를 그대로 배포
+          path: .
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
