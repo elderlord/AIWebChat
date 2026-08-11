@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "note": "퍼소나 목록. 새 퍼소나는 personas/<id>/ 폴더(persona.json + lore.json)를 만들고 여기 한 줄 추가하면 됩니다. default = 처음 열 때 기본 퍼소나.",
+  "default": "seoul-1990",
+  "personas": [
+    { "id": "seoul-1990", "name": "새벽별 · 1990 서울", "dir": "personas/seoul-1990" },
+    { "id": "mansu-1990", "name": "만수 형 · 1990 동네", "dir": "personas/mansu-1990" }
+  ]
+}
