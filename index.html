@@ -108,13 +108,27 @@
   /* ===== 로그인(접속) 화면 ===== */
   #login {
     flex: 1 1 auto;
-    display: flex;
+    display: none;           /* 기본 숨김: 공개 입장에선 안 보이고, 필요 시 JS가 표시 */
     flex-direction: column;
     justify-content: center;
     align-items: center;
     padding: 20px;
     text-align: center;
   }
+  /* 로딩(부팅) 화면 — 퍼소나 불러오는 잠깐 동안 표시 */
+  #boot {
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    padding: 20px;
+    text-align: center;
+    color: var(--green-dim);
+    letter-spacing: 1px;
+  }
+  #boot .shapes { font-size: 28px; color: var(--green); margin-bottom: 14px; letter-spacing: 8px; }
+  #boot .shapes .cursor { }
   #login pre {
     color: var(--green);
     margin: 0 0 18px 0;
@@ -243,13 +257,19 @@
   </span>
 </header>
 
-<!-- ===== 접속(로그인) 화면 ===== -->
+<!-- ===== 로딩(부팅) 화면 : 퍼소나 불러오는 잠깐 ===== -->
+<section id="boot">
+  <div class="shapes">△ ▢ ○</div>
+  <div>삼각별에서 친구들을 부르는 중<span class="cursor"></span></div>
+</section>
+
+<!-- ===== 접속(로그인) 화면 : 기본 숨김(공개 입장 시 미표시) ===== -->
 <section id="login">
   <pre>
  ╔══════════════════════════════════════════════╗
- ║   H  I  T  E  L      O  N  L  I  N  E         ║
- ║   ─────────────────────────────────────      ║
- ║   1990  RETRO  CHAT  TERMINAL   v1.0          ║
+ ║        ◇   삼 각 별   이 야 기   ◇            ║
+ ║        △  과거   ▢  현재   ○  미래           ║
+ ║        샘이   ·   탐이   ·   꿈이             ║
  ╚══════════════════════════════════════════════╝
   </pre>
   <div class="box">
@@ -428,7 +448,7 @@
   var passEl = $("pass"), connectBtn = $("connectBtn"), loginErr = $("loginErr");
   var inputEl = $("input"), sendBtn = $("sendBtn"), connEl = $("conn");
   var rememberEl = $("remember");
-  var titleEl = $("title"), personaSelect = $("persona");
+  var titleEl = $("title"), personaSelect = $("persona"), bootEl = $("boot");
 
   // ===== localStorage (사생활 모드 등에서 실패해도 무시) =====
   function storeGet() { try { return localStorage.getItem(STORAGE_KEY); } catch (e) { return null; } }
@@ -586,7 +606,8 @@
     loginErr.textContent = "";
     // 기억 옵션: 켜져 있으면 이 브라우저에 저장, 꺼져 있으면 지움
     if (rememberEl.checked) storeSet(pw); else storeClear();
-    // 로그인 화면 전환 (진짜 인증은 첫 메시지에서 확인됨)
+    // 로그인/로딩 화면 숨기고 채팅으로 (진짜 인증은 첫 메시지에서 확인됨)
+    if (bootEl) bootEl.style.display = "none";
     loginEl.style.display = "none";
     chatEl.style.display = "flex";
     connEl.textContent = "접속됨";
@@ -887,6 +908,9 @@
         connect();
         return;
       }
+      // 비공개(암호) 모드: 로딩 숨기고 로그인 화면 표시
+      if (bootEl) bootEl.style.display = "none";
+      loginEl.style.display = "flex";
       var saved = storeGet();
       if (saved) {
         passEl.value = saved;
