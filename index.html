@@ -243,7 +243,8 @@
     <label for="pass">암호 입력 &gt;</label>
     <div class="field">
       <span class="prompt">PASSWD:</span>
-      <input type="password" id="pass" autocomplete="off" spellcheck="false" placeholder="········">
+      <input type="password" id="pass" autocomplete="off" autocapitalize="off"
+             autocorrect="off" spellcheck="false" placeholder="········">
     </div>
     <label class="remember">
       <input type="checkbox" id="remember" checked>
@@ -378,7 +379,7 @@
 
   // ===== 접속 =====
   function connect() {
-    var pw = passEl.value;
+    var pw = (passEl.value || "").trim(); // 붙여넣기·모바일 자동입력의 앞뒤 공백 제거
     if (!pw) { loginErr.textContent = "암호를 입력하세요."; passEl.focus(); return; }
     passphrase = pw;
     loginErr.textContent = "";
