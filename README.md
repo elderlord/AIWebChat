@@ -35,6 +35,8 @@ personas/
   saemi/  tami/  kkumi/         삼각별 세 주인공 (각 persona.json + lore.json)
   seoul-1990/  mansu-1990/      1990 프로토타입 퍼소나 (예시로 남겨둠)
   _template/                    새 퍼소나 복붙 템플릿 (앞의 _ 라 목록에 안 뜸)
+docs/scenarios/                노선(스토리) 설계 문서
+  saemi.md                     샘이 노선 「샘이가 놓친 한 가지」 (초안)
 .github/workflows/deploy-pages.yml   push 시 GitHub Pages 자동 배포
 ```
 
@@ -158,7 +160,8 @@ npx wrangler deploy
 
 ## 남은 작업(TODO)
 
-- [ ] **시나리오(스토리 큰 틀)** 확정 → `scenario.json`(단계·목표) + 컨텍스트 주입으로 스토리 진행 골격
+- [~] **시나리오(스토리 큰 틀)**: 샘이 노선 초안 기록됨(`docs/scenarios/saemi.md`).
+      다음 → 이를 `scenario.json`(거점·단계·목표) + 컨텍스트 주입으로 앱에 반영
 - [ ] **디자인 가이드** 확정 → 삼각별/캐릭터색(샘이 노랑·탐이 주황·꿈이 파랑) 반영한 UI 리브랜딩
 - [ ] **Worker 배포** → Origin 제한 켜기 + `NOTES` KV 바인딩(자동축적)
 - [ ] **딥링크 진입**(URL 파라미터로 캐릭터/거점) · 관람객 리셋(키오스크)
