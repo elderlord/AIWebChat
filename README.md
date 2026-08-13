@@ -37,6 +37,7 @@ personas/
   _template/                    새 퍼소나 복붙 템플릿 (앞의 _ 라 목록에 안 뜸)
 docs/scenarios/                노선(스토리) 설계 문서
   saemi.md                     샘이 노선 「샘이가 놓친 한 가지」 (초안)
+  tami.md                      탐이 노선 「탐이가 틀리는 법」 (초안)
 .github/workflows/deploy-pages.yml   push 시 GitHub Pages 자동 배포
 ```
 
