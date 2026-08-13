@@ -35,9 +35,12 @@ personas/
   saemi/  tami/  kkumi/         삼각별 세 주인공 (각 persona.json + lore.json)
   seoul-1990/  mansu-1990/      1990 프로토타입 퍼소나 (예시로 남겨둠)
   _template/                    새 퍼소나 복붙 템플릿 (앞의 _ 라 목록에 안 뜸)
-docs/scenarios/                노선(스토리) 설계 문서
-  saemi.md                     샘이 노선 「샘이가 놓친 한 가지」 (최신 기준선)
-  tami.md                      탐이 노선 「탐이가 틀리는 법」·「균형이 멈춘 날」 (최신 기준선)
+docs/scenarios/                노선(스토리)·시스템 설계 문서
+  commonframework.md           세 캐릭터 노선 공통 설계 기준 (상위 프레임)
+  saemi.md                     샘이 노선 「샘이가 놓친 한 가지」 · 4거점
+  tami.md                      탐이 노선 「탐이가 틀리는 법」·「균형이 멈춘 날」 · 3거점
+  kkumi.md                     꿈이 노선 「미래의 첫 장이 사라졌다」 · 3거점
+  integration-ui.md            세 노선 통합: Soft Gating·기록 교차·삼각별 완성·NFC 카드
 .github/workflows/deploy-pages.yml   push 시 GitHub Pages 자동 배포
 ```
 
