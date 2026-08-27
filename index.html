@@ -1235,6 +1235,14 @@
       try { localStorage.setItem(VOICE_KEY, voiceOn ? "1" : "0"); } catch (e) {}
       updateVoiceBtn();
       if (synth) synth.cancel(); // 끄면 재생 중단 / 켜는 클릭은 모바일에서 음성 잠금 해제 역할
+      if (voiceOn) {
+        // 켜는 즉시 지금 캐릭터 대사를 읽어 '작동 확인' 피드백을 준다 (다음 답변부터가 아니라 바로 들림)
+        var cur = botBody && botBody.textContent ? botBody.textContent.trim() : "";
+        if (cur && cur !== "…") speak(cur, botSpk);
+        else showSys("🔊 읽기 ON — 다음 대사부터 소리로 읽어줄게요.");
+      } else {
+        showSys("🔇 읽기 OFF — 소리 재생을 껐어요.");
+      }
     });
   }
   // 위 패널의 🔊 : 지금 캐릭터 대사 다시 들려주기
