@@ -492,6 +492,7 @@
   function switchPersona(id) {
     if (!id || id === persona.id) return;
     if (synth) synth.cancel(); // 캐릭터 바뀌면 읽던 목소리 중단
+    if (typeof resetSTT === "function") resetSTT(); // 진행 중이던 음성 인식도 정리(새 입력 막힘 방지)
     loadPersona(id).then(function () {
       history = []; memory = []; mark = 0;
       loadConv();
@@ -606,24 +607,38 @@
   }
 
   // ===== 음성 입력 (STT · SpeechRecognition, 꾹 눌러 말하기) =====
+  // 안정성을 위해 '누를 때마다 인식기를 새로 생성'한다. (인식기를 재사용하면 안드로이드/크롬 등에서
+  //  몇 번 뒤 onresult 가 멈추거나 상태가 꼬여 '입력이 안 들어가는' 문제가 생김)
   var SR = window.SpeechRecognition || window.webkitSpeechRecognition || null;
   var sttOK = !!SR;
-  var recog = null, recording = false, sttFinal = "";
+  var recog = null;         // 현재 살아있는 인식기 (없으면 null)
+  var recording = false;    // 실제로 듣는 중(onstart~onend)
+  var wantStop = false;     // 시작 전에 손을 뗐을 때 예약 정지
+  var sttFinal = "";        // 이번 발화에서 확정된 텍스트
 
   function initSTT() {
     if (!sttOK) {
-      // 미지원 브라우저: 마이크 숨기고 텍스트 입력으로 안내
       if (micBtn) micBtn.style.display = "none";
       if (micHint) micHint.textContent = "이 브라우저는 음성 입력을 지원하지 않아요 — 아래 칸에 입력해 주세요. (크롬/엣지/사파리 권장)";
       return;
     }
     if (micHint) micHint.textContent = "🎙️ 마이크를 꾹 누른 채 말하고, 손을 떼면 전송돼요.";
-    recog = new SR();
-    recog.lang = "ko-KR";
-    recog.interimResults = true;
-    recog.maxAlternatives = 1;
-    recog.continuous = false;
-    recog.onresult = function (e) {
+  }
+
+  function makeRecog() {
+    var r = new SR();
+    r.lang = "ko-KR";
+    r.interimResults = true;
+    r.maxAlternatives = 1;
+    r.continuous = false;
+    r.onstart = function () {
+      recording = true;
+      if (micBtn) micBtn.classList.add("rec");
+      if (meState) meState.textContent = "● 듣는 중";
+      setMe("…", true);
+      if (wantStop) { wantStop = false; try { r.stop(); } catch (e) {} } // 시작 전에 이미 뗐으면 바로 정지
+    };
+    r.onresult = function (e) {
       var interim = "";
       for (var i = e.resultIndex; i < e.results.length; i++) {
         var t = e.results[i][0].transcript;
@@ -631,40 +646,65 @@
       }
       setMe((sttFinal + interim) || "…", true);
     };
-    recog.onerror = function (ev) {
+    r.onerror = function (ev) {
+      var er = ev && ev.error;
+      if (er === "aborted") return;   // 전환·재시작으로 인한 중단은 조용히
       recording = false;
       if (micBtn) micBtn.classList.remove("rec");
       if (meState) meState.textContent = "";
-      if (ev && (ev.error === "not-allowed" || ev.error === "service-not-allowed")) {
-        showSys("마이크 권한이 필요해요. 브라우저 주소창의 🎙️/자물쇠 아이콘에서 허용해 주세요.", true);
-      } else if (ev && ev.error === "no-speech") {
+      if (er === "not-allowed" || er === "service-not-allowed") {
+        showSys("마이크 권한이 필요해요. 브라우저 주소창의 🎙️/자물쇠 아이콘에서 마이크를 '허용'해 주세요.", true);
+      } else if (er === "no-speech") {
+        if (micHint) micHint.textContent = "🎙️ 소리가 안 잡혔어요 — 버튼을 누른 채 또렷이 말하고 떼어보세요.";
         mePlaceholder();
+      } else if (er === "audio-capture") {
+        showSys("마이크를 찾지 못했어요. 다른 앱이 마이크를 쓰고 있진 않은지 확인해 주세요.", true);
+      } else if (er) {
+        showSys("음성 인식 오류: " + er + " — 다시 눌러보세요.", true);
       }
     };
-    recog.onend = function () {
+    r.onend = function () {
+      recording = false;
+      if (recog === r) recog = null;    // 이 인식기는 수명 종료
       if (micBtn) micBtn.classList.remove("rec");
       if (meState) meState.textContent = "";
-      recording = false;
       var said = (sttFinal || "").trim();
       sttFinal = "";
       if (said) { if (meBody) meBody.classList.remove("interim"); send(said); }
       else if (meBody && meBody.classList.contains("interim")) { mePlaceholder(); }
     };
+    return r;
   }
 
   function startRec() {
-    if (!sttOK || busy || recording || !recog) return;
-    if (synth) synth.cancel();     // 읽어주던 목소리 멈추고 듣기
-    sttFinal = "";
-    recording = true;
+    if (!sttOK || busy) return;
+    if (recording || recog) return;   // 이미 진행 중이면 무시
+    if (synth) synth.cancel();          // 읽어주던 목소리를 멈추고(TTS↔STT 충돌 방지) 듣기
+    sttFinal = ""; wantStop = false;
+    recog = makeRecog();
     setMe("…", true);
-    if (micBtn) micBtn.classList.add("rec");
-    if (meState) meState.textContent = "● 듣는 중";
-    try { recog.start(); } catch (e) { /* 이미 시작됨 등은 무시 */ }
+    try {
+      recog.start();
+    } catch (e) {
+      // 드물게 start() 가 바로 던지면 정리하고 한 번 더 시도할 수 있게 초기화
+      try { recog.abort(); } catch (_) {}
+      recog = null; recording = false;
+      if (micBtn) micBtn.classList.remove("rec");
+      if (micHint) micHint.textContent = "🎙️ 한 번 더 눌러 말해보세요.";
+    }
   }
   function stopRec() {
-    if (!recording || !recog) return;
-    try { recog.stop(); } catch (e) {}   // 결과는 onend 에서 전송
+    if (!recog) return;
+    if (recording) { try { recog.stop(); } catch (e) {} }  // 결과는 onend 에서 전송
+    else { wantStop = true; }                               // 시작 전이면 시작되자마자 멈추도록 예약
+  }
+
+  // 캐릭터 전환 등에서 STT 상태를 깨끗이 리셋 (이전 인식기가 새 입력을 막지 않도록)
+  function resetSTT() {
+    wantStop = false; recording = false; sttFinal = "";
+    if (recog) { try { recog.abort(); } catch (e) {} recog = null; }
+    if (micBtn) { micBtn.classList.remove("rec"); micBtn.disabled = busy || !sttOK; }
+    if (meState) meState.textContent = "";
   }
 
   // ===== localStorage (사생활 모드 등에서 실패해도 무시) =====
@@ -1185,10 +1225,17 @@
   // 마이크: 꾹 누르는 동안 듣고, 떼면(또는 벗어나면) 전송
   if (micBtn) {
     micBtn.addEventListener("contextmenu", function (e) { e.preventDefault(); }); // 롱프레스 메뉴 방지
-    micBtn.addEventListener("pointerdown", function (e) { e.preventDefault(); startRec(); });
-    micBtn.addEventListener("pointerup", function (e) { e.preventDefault(); stopRec(); });
-    micBtn.addEventListener("pointerleave", function () { if (recording) stopRec(); });
-    micBtn.addEventListener("pointercancel", function () { if (recording) stopRec(); });
+    micBtn.addEventListener("pointerdown", function (e) {
+      e.preventDefault();
+      try { micBtn.setPointerCapture(e.pointerId); } catch (_) {} // 손가락 미세 이동에도 유지
+      startRec();
+    });
+    micBtn.addEventListener("pointerup", function (e) {
+      e.preventDefault();
+      try { micBtn.releasePointerCapture(e.pointerId); } catch (_) {}
+      stopRec();
+    });
+    micBtn.addEventListener("pointercancel", function () { stopRec(); });
   }
 
   // ===== 초기화 =====
