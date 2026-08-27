@@ -575,12 +575,28 @@
     }
   }
 
+  // 읽기용으로 이모지·장식 기호 제거 (화면엔 그대로, 소리로만 걸러냄)
+  //  예: "안녕! 🦕✨" → "안녕!"  ("공룡", "반짝임" 처럼 읽히는 것 방지)
+  function speechText(s) {
+    var t = String(s || "");
+    try {
+      // 최신 브라우저: 이모지(그림문자)+수정자+변이선택자+ZWJ 제거
+      t = t.replace(new RegExp("[\\p{Extended_Pictographic}\\p{Emoji_Modifier}\\uFE0F\\u200D]", "gu"), "");
+    } catch (e) {
+      // 구형 엔진 대비 폴백: 주요 이모지 블록을 직접 지정해 제거 (ASCII 이스케이프)
+      t = t.replace(new RegExp("\\uD83C[\\uDC00-\\uDFFF]|\\uD83D[\\uDC00-\\uDFFF]|\\uD83E[\\uDC00-\\uDFFF]|[\\u2190-\\u21FF\\u2300-\\u27BF\\u2B00-\\u2BFF\\u3030\\u303D\\u3297\\u3299\\uFE00-\\uFE0F\\u200D]", "g"), "");
+    }
+    return t.replace(/\s{2,}/g, " ").trim();
+  }
+
   // 텍스트를 소리 내어 읽기. spkEl 이 있으면 재생 중 표시.
   function speak(text, spkEl) {
     if (!synth || !text) return;
+    var clean = speechText(text);
+    if (!clean) return;              // 이모지만 있던 경우엔 재생 안 함
     try {
       synth.cancel();  // 이전 재생 중단(겹침 방지)
-      var u = new SpeechSynthesisUtterance(String(text));
+      var u = new SpeechSynthesisUtterance(clean);
       u.lang = "ko-KR";
       if (koVoice) u.voice = koVoice;
       u.rate = 1.0; u.pitch = 1.0; u.volume = 1.0;
