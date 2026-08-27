@@ -615,6 +615,8 @@
   var recording = false;    // 실제로 듣는 중(onstart~onend)
   var wantStop = false;     // 시작 전에 손을 뗐을 때 예약 정지
   var sttFinal = "";        // 이번 발화에서 확정된 텍스트
+  var lastInterim = "";     // 아직 확정 전의 최신 임시 텍스트 (떼는 즉시 전송용)
+  var sentThisTurn = false; // 이번 발화가 이미 전송됐는지 (중복 전송 방지)
 
   function initSTT() {
     if (!sttOK) {
@@ -623,6 +625,19 @@
       return;
     }
     if (micHint) micHint.textContent = "🎙️ 마이크를 꾹 누른 채 말하고, 손을 떼면 전송돼요.";
+  }
+
+  // 이번 발화 마무리 → 화면에 보이던 말을 (한 번만) 전송. text 없으면 지금까지 인식분 사용.
+  function finishRec(text) {
+    recording = false;
+    if (micBtn) micBtn.classList.remove("rec");
+    if (meState) meState.textContent = "";
+    if (sentThisTurn) return;
+    sentThisTurn = true;
+    var said = ((text != null ? text : (sttFinal || lastInterim)) || "").trim();
+    sttFinal = ""; lastInterim = "";
+    if (said) { if (meBody) meBody.classList.remove("interim"); send(said); }
+    else if (meBody && meBody.classList.contains("interim")) { mePlaceholder(); }
   }
 
   function makeRecog() {
@@ -644,6 +659,7 @@
         var t = e.results[i][0].transcript;
         if (e.results[i].isFinal) sttFinal += t; else interim += t;
       }
+      lastInterim = interim;
       setMe((sttFinal + interim) || "…", true);
     };
     r.onerror = function (ev) {
@@ -664,14 +680,8 @@
       }
     };
     r.onend = function () {
-      recording = false;
       if (recog === r) recog = null;    // 이 인식기는 수명 종료
-      if (micBtn) micBtn.classList.remove("rec");
-      if (meState) meState.textContent = "";
-      var said = (sttFinal || "").trim();
-      sttFinal = "";
-      if (said) { if (meBody) meBody.classList.remove("interim"); send(said); }
-      else if (meBody && meBody.classList.contains("interim")) { mePlaceholder(); }
+      finishRec();                      // 아직 전송 안 됐으면(짧아서 즉시전송 안 탄 경우) 여기서 전송
     };
     return r;
   }
@@ -680,7 +690,7 @@
     if (!sttOK || busy) return;
     if (recording || recog) return;   // 이미 진행 중이면 무시
     if (synth) synth.cancel();          // 읽어주던 목소리를 멈추고(TTS↔STT 충돌 방지) 듣기
-    sttFinal = ""; wantStop = false;
+    sttFinal = ""; lastInterim = ""; wantStop = false; sentThisTurn = false;
     recog = makeRecog();
     setMe("…", true);
     try {
@@ -695,13 +705,23 @@
   }
   function stopRec() {
     if (!recog) return;
-    if (recording) { try { recog.stop(); } catch (e) {} }  // 결과는 onend 에서 전송
-    else { wantStop = true; }                               // 시작 전이면 시작되자마자 멈추도록 예약
+    if (!recording) { wantStop = true; return; }   // 아직 안 켜졌으면 켜지는 즉시 정지 예약
+    // 떼는 즉시: 화면에 보이던 말이 있으면 확정을 기다리지 않고 바로 전송(반응성↑)
+    var now = (sttFinal || lastInterim).trim();
+    if (now) {
+      finishRec(now);
+      try { recog.abort(); } catch (e) {}   // 남은 인식은 중단 (onend 는 sentThisTurn 으로 무시)
+      recog = null;
+    } else {
+      // 아직 아무것도 안 잡혔으면 정상 종료를 기다려 최종 결과를 받는다
+      if (meState) meState.textContent = "전송 준비…";
+      try { recog.stop(); } catch (e) {}
+    }
   }
 
   // 캐릭터 전환 등에서 STT 상태를 깨끗이 리셋 (이전 인식기가 새 입력을 막지 않도록)
   function resetSTT() {
-    wantStop = false; recording = false; sttFinal = "";
+    wantStop = false; recording = false; sttFinal = ""; lastInterim = ""; sentThisTurn = true;
     if (recog) { try { recog.abort(); } catch (e) {} recog = null; }
     if (micBtn) { micBtn.classList.remove("rec"); micBtn.disabled = busy || !sttOK; }
     if (meState) meState.textContent = "";
