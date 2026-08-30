@@ -207,6 +207,41 @@
   /* ===== 채팅(무대) 화면 : 위=캐릭터 / 아래=나 2분할 ===== */
   #chat { flex: 1 1 auto; display: none; flex-direction: column; min-height: 0; }
 
+  /* 미션 진행 표시 (시나리오 있을 때만) */
+  #progress {
+    flex: 0 0 auto;
+    display: none;                 /* 시나리오 로드되면 JS가 flex 로 켬 */
+    align-items: center; gap: 8px;
+    padding: 6px 16px;
+    font-size: 11px; letter-spacing: 1px;
+    color: var(--green-dim);
+    border-bottom: 1px solid var(--green-dark);
+  }
+  #progress .dots { display: flex; gap: 5px; }
+  #progress .dot { width: 9px; height: 9px; border: 1px solid var(--green-dim); border-radius: 50%; }
+  #progress .dot.done { background: var(--cc, var(--green)); border-color: var(--cc, var(--green)); box-shadow: 0 0 6px var(--cc, var(--green)); }
+  #progress .dot.cur  { border-color: var(--cc, var(--green)); box-shadow: 0 0 6px var(--cc, var(--green)); }
+  #progress .plabel { color: var(--cc, var(--green)); font-weight: bold; }
+
+  /* 추천 답변 칩 (시나리오 유도) */
+  #suggest {
+    flex: 0 0 auto;
+    display: flex; flex-wrap: wrap; gap: 8px;
+    padding: 8px 16px 0;
+  }
+  #suggest:empty { display: none; }
+  .chip {
+    background: #020402; color: var(--green);
+    border: 1px solid var(--green-dim);
+    font-family: inherit; font-size: 13px;
+    padding: 6px 12px; margin: 0;
+    cursor: pointer; text-shadow: inherit; letter-spacing: 0;
+    border-radius: 14px;
+  }
+  .chip:hover:not(:disabled) { background: var(--green-dark); }
+  .chip.next { border-color: var(--cc, var(--amber)); color: var(--cc, var(--amber)); font-weight: bold; }
+  .chip:disabled { opacity: 0.4; cursor: wait; }
+
   /* 시스템 알림 한 줄(메모 추가·전환·오류 등) — 잠깐 떴다 접힘 */
   #sysline {
     flex: 0 0 auto;
@@ -366,6 +401,10 @@
 <!-- ===== 채팅(무대) 화면 : 2분할 ===== -->
 <section id="chat">
   <div id="sysline"></div>
+  <div id="progress">
+    <span class="dots" id="progressDots"></span>
+    <span class="plabel" id="progressLabel"></span>
+  </div>
   <div id="stage">
     <!-- 위: 캐릭터가 말한다 -->
     <div class="panel" id="botPanel">
@@ -384,6 +423,7 @@
       <div class="pbody placeholder" id="meBody">🎙️ 마이크를 꾹 누른 채 말하고, 손을 떼면 전송돼요.</div>
     </div>
   </div>
+  <div id="suggest"></div>
   <div class="mic-hint" id="micHint"></div>
   <div id="controls">
     <button id="mic" title="꾹 눌러 말하기 (누르는 동안 듣고, 떼면 전송)">🎙️</button>
@@ -433,6 +473,12 @@
   // 사용자의 말에 키워드가 걸리면 해당 카드를 골라 그 턴의 컨텍스트로 주입 → 컨셉 이탈/헛소리를 줄인다.
   var LORE = []; // 로드 전에는 비어 있음 → retrieveLore 는 자연히 "" 반환
 
+  // ===== 미션 시나리오(state machine) =====
+  // personas/<id>/scenario.json 이 있으면 '능동적 스토리텔링' 모드가 켜진다.
+  // 없으면 SCENARIO=null → 지금까지처럼 자유 대화로 동작(하위호환).
+  var SCENARIO = null;   // {id,title,start,stages:[{id,kind,spot,label,goal,opening,director,suggest,next}]}
+  var stageId = null;    // 현재 단계 id (퍼소나별로 저장: retro1990.<id>.stage)
+
   // 매니페스트 + 활성 퍼소나 로드 (Promise)
   function loadPersonas() {
     return fetch(PERSONA_INDEX, { cache: "no-cache" })
@@ -454,9 +500,11 @@
     var dir = entry.dir || ("personas/" + id);
     return Promise.all([
       fetch(dir + "/persona.json", { cache: "no-cache" }).then(function (r) { return r.ok ? r.json() : {}; }).catch(function () { return {}; }),
-      fetch(dir + "/lore.json", { cache: "no-cache" }).then(function (r) { return r.ok ? r.json() : null; }).catch(function () { return null; })
+      fetch(dir + "/lore.json", { cache: "no-cache" }).then(function (r) { return r.ok ? r.json() : null; }).catch(function () { return null; }),
+      fetch(dir + "/scenario.json", { cache: "no-cache" }).then(function (r) { return r.ok ? r.json() : null; }).catch(function () { return null; })
     ]).then(function (res) {
-      var pj = res[0] || {}, lj = res[1];
+      var pj = res[0] || {}, lj = res[1], sc = res[2];
+      SCENARIO = (sc && Array.isArray(sc.stages) && sc.stages.length) ? sc : null;
       persona = {
         id: id,
         name: pj.name || entry.name || id,
@@ -501,8 +549,16 @@
         applyPersonaColor();
         setBotName();
         showSys("＊ 캐릭터 전환 → " + persona.name);
-        if (history.length) { renderHistory(); }
-        else { showGreeting(); mePlaceholder(); }
+        if (scenarioOn()) {
+          if (!stageId || !stageById(stageId)) stageId = SCENARIO.start;
+          updateProgress();
+          if (history.length) { renderHistory(); renderSuggestions(currentStage()); }
+          else { mePlaceholder(); deliverOpening(currentStage()); }
+        } else {
+          clearSuggestions(); updateProgress();
+          if (history.length) { renderHistory(); }
+          else { showGreeting(); mePlaceholder(); }
+        }
       }
     });
   }
@@ -552,6 +608,8 @@
   var botSpk = $("botSpk"), botBody = $("botBody");
   var mePanel = $("mePanel"), meBody = $("meBody"), meState = $("meState");
   var micBtn = $("mic"), micHint = $("micHint");
+  var progressEl = $("progress"), progressDots = $("progressDots"), progressLabel = $("progressLabel");
+  var suggestEl = $("suggest");
 
   // ===== 음성 재생 (TTS · 브라우저 내장 Web Speech API, 비용/키 없음) =====
   var synth = window.speechSynthesis || null;
@@ -758,10 +816,11 @@
       localStorage.setItem(pkey("history"), JSON.stringify(history));
       localStorage.setItem(pkey("memory"), JSON.stringify(memory));
       localStorage.setItem(pkey("mark"), String(mark));
+      if (stageId) localStorage.setItem(pkey("stage"), stageId);
     } catch (e) {}
   }
   function loadConv() {
-    history = []; memory = []; mark = 0;
+    history = []; memory = []; mark = 0; stageId = null;
     try {
       var h = JSON.parse(localStorage.getItem(pkey("history")) || "null");
       if (Array.isArray(h)) history = h;
@@ -769,10 +828,13 @@
       if (Array.isArray(m)) memory = m;
       var k = parseInt(localStorage.getItem(pkey("mark")) || "0", 10);
       if (!isNaN(k)) mark = k;
+      var st = localStorage.getItem(pkey("stage"));
+      if (st) stageId = st;
     } catch (e) {}
   }
   function clearConv() {
     history = []; mark = 0;
+    stageId = SCENARIO ? SCENARIO.start : null;   // 미션도 처음으로
     saveConv();
   }
   function clearMemory() {
@@ -856,6 +918,105 @@
   }
   function applyPersonaColor() {
     if (botPanel) botPanel.style.setProperty("--cc", persona.color || "var(--green)");
+  }
+
+  // ===== 미션 시나리오 엔진 (state machine + 능동 유도) =====
+  function scenarioOn() { return !!SCENARIO; }
+  function stageById(id) {
+    if (!SCENARIO) return null;
+    for (var i = 0; i < SCENARIO.stages.length; i++) if (SCENARIO.stages[i].id === id) return SCENARIO.stages[i];
+    return null;
+  }
+  function currentStage() { return stageId ? stageById(stageId) : null; }
+  function siteStages() {
+    return SCENARIO ? SCENARIO.stages.filter(function (s) { return s.kind === "site"; }) : [];
+  }
+  // 현재 단계가 몇 번째 거점인지 (site 기준, intro=0, end=전체 완료)
+  function stageProgress() {
+    var st = currentStage(); if (!st) return { i: 0, n: 0 };
+    var sites = siteStages(), n = sites.length;
+    if (st.kind === "intro") return { i: 0, n: n };
+    if (st.kind === "end") return { i: n, n: n };
+    for (var k = 0; k < sites.length; k++) if (sites[k].id === st.id) return { i: k + 1, n: n };
+    return { i: 0, n: n };
+  }
+  function updateProgress() {
+    if (!progressEl) return;
+    if (!scenarioOn()) { progressEl.style.display = "none"; return; }
+    var st = currentStage(); var p = stageProgress();
+    progressEl.style.display = "flex";
+    progressDots.innerHTML = "";
+    for (var k = 0; k < p.n; k++) {
+      var d = document.createElement("span");
+      d.className = "dot" + (k < p.i ? " done" : (k === p.i ? " cur" : ""));
+      progressDots.appendChild(d);
+    }
+    var where = st ? (st.spot || st.label || "") : "";
+    progressLabel.textContent = (st && st.kind === "end")
+      ? "완주 · " + where
+      : "거점 " + p.i + "/" + p.n + (where ? " · " + where : "");
+  }
+
+  // 추천 답변 칩 렌더 (탭하면 그 말이 전송). 하이브리드: '다음 장소로 ▶' 버튼도 함께.
+  function renderSuggestions(stage) {
+    if (!suggestEl) return;
+    suggestEl.innerHTML = "";
+    if (!scenarioOn() || !stage) return;
+    var list = Array.isArray(stage.suggest) ? stage.suggest : [];
+    for (var i = 0; i < list.length; i++) {
+      (function (txt) {
+        var b = document.createElement("button");
+        b.className = "chip";
+        b.textContent = txt;
+        b.addEventListener("click", function () { if (!busy) send(txt); });
+        suggestEl.appendChild(b);
+      })(list[i]);
+    }
+    // 수동 전환 버튼 (다음 단계가 있고 종료 단계가 아닐 때)
+    if (stage.next && stage.kind !== "end") {
+      var nb = document.createElement("button");
+      nb.className = "chip next";
+      nb.textContent = "다음 장소로 ▶";
+      nb.addEventListener("click", function () { if (!busy) goToStage(stage.next, { announce: true, delay: 200 }); });
+      suggestEl.appendChild(nb);
+    }
+  }
+  function clearSuggestions() { if (suggestEl) suggestEl.innerHTML = ""; }
+
+  // 답변 끝의 숨은 진행 신호 [[NEXT]] 를 떼어낸다 → {text, advance}
+  function stripNextSignal(text) {
+    var t = String(text || "");
+    var advance = /\[\[\s*NEXT\s*\]\]/i.test(t);
+    if (advance) t = t.replace(/\[\[\s*NEXT\s*\]\]/ig, "").replace(/\s+$/,"").trim();
+    return { text: t, advance: advance };
+  }
+
+  // 캐릭터가 먼저 말을 건다 (단계 진입 시 능동 발화)
+  function deliverOpening(stage) {
+    if (!stage) return;
+    updateProgress();
+    var line = stage.opening || "";
+    if (!line) { renderSuggestions(stage); return; }  // 대본이 없으면 다음 턴에 director가 이끔
+    setBotName();
+    botBody.classList.remove("placeholder", "cursor");
+    history.push({ role: "assistant", content: line });
+    saveConv();
+    typeOut(botBody, line);
+    if (voiceOn) speak(line, botSpk);
+    renderSuggestions(stage);
+  }
+
+  // 단계 이동. announce=true 면 잠깐 뒤 새 단계 오프닝을 발화.
+  function goToStage(id, opts) {
+    var st = stageById(id); if (!st) return;
+    stageId = id; saveConv();
+    updateProgress();
+    if (opts && opts.announce) {
+      clearSuggestions();
+      setTimeout(function () { deliverOpening(st); }, (opts.delay != null ? opts.delay : 1400));
+    } else {
+      renderSuggestions(st);
+    }
   }
 
   // 하위호환 셰임: 예전 addMsg(kind,who,text) 호출을 새 패널 UI로 라우팅
@@ -954,12 +1115,28 @@
     if (!OPEN_ACCESS) {
       showSys("＊ 삐----삐----치지지직 ... 호스트에 연결되었습니다.");
     }
-    if (history.length) {
-      renderHistory();                 // 위=마지막 캐릭터 대사 / 아래=마지막 내 말
-      showSys("＊ 지난 대화를 불러왔어요. 이어서 얘기하세요.  (명령: /메모  /대화지우기  /도움)");
+
+    if (scenarioOn()) {
+      // 미션 모드: 저장된 단계 복원(없으면 시작 단계)
+      if (!stageId || !stageById(stageId)) stageId = SCENARIO.start;
+      updateProgress();
+      if (history.length) {
+        renderHistory();
+        renderSuggestions(currentStage());
+        showSys("＊ 이어하기 — 미션을 계속해요.  (명령: /미션  /다음  /처음  /도움)");
+      } else {
+        mePlaceholder();
+        deliverOpening(currentStage());   // 캐릭터가 먼저 말을 건다
+      }
     } else {
-      showGreeting();                  // 캐릭터가 위 패널에서 먼저 인사
-      mePlaceholder();
+      updateProgress();                    // 시나리오 없으면 진행바 숨김
+      if (history.length) {
+        renderHistory();
+        showSys("＊ 지난 대화를 불러왔어요. 이어서 얘기하세요.  (명령: /메모  /대화지우기  /도움)");
+      } else {
+        showGreeting();
+        mePlaceholder();
+      }
     }
     syncNotesFromServer(persona.id);   // 서버(KV)에 쌓인 컨셉 메모 합치기
   }
@@ -1021,6 +1198,21 @@
         content: "[참고 자료] 아래 사실에 어긋나지 않게 답하되, 목록을 그대로 읊지 말고 네가 원래 아는 것처럼 자연스럽게 녹여라:\n" + lore
       });
     }
+    // 미션 연출 지시: 모델을 '연출가'로 만들어 관람객을 목표로 능동적으로 이끈다
+    var stg = scenarioOn() ? currentStage() : null;
+    if (stg) {
+      var lines = [
+        "[현재 미션 연출]",
+        "장소: " + (stg.spot || stg.label || ""),
+        "이 단계의 목표: " + (stg.goal || ""),
+        "연출 지시: " + (stg.director || ""),
+        "규칙: 관람객을 위 목표로 부드럽게 이끌어라. 답은 짧게(2~4문장), 매번 '다음 행동을 제안하거나 이끄는 질문' 하나로 끝내라. 목표·지시문을 그대로 읊거나 설명문처럼 나열하지 마라. 관람객이 딴 얘기를 해도 잠깐 받아준 뒤 자연스럽게 미션으로 데려와라."
+      ];
+      if (stg.next) {
+        lines.push("진행 신호: 이 단계의 목표가 충분히 이뤄졌다고 판단되면(관람객이 핵심을 이해했거나 다음 장소로 가려 하면) 답변의 맨 끝에 정확히 [[NEXT]] 라고만 덧붙여라. 아직이면 절대 붙이지 마라. 이 표시는 화면에서 자동으로 지워진다.");
+      }
+      sys.push({ role: "system", content: lines.join("\n") });
+    }
 
     var body = {
       passphrase: passphrase,
@@ -1063,10 +1255,17 @@
         showSys("응답을 해독하지 못했습니다. (빈 응답)", true);
         return;
       }
+      // 미션 진행 신호 [[NEXT]] 분리 (화면·기록엔 표시 안 함)
+      var advance = false, stgNow = scenarioOn() ? currentStage() : null;
+      if (stgNow) { var parsed = stripNextSignal(answer); answer = parsed.text; advance = parsed.advance; }
+      if (!answer) answer = "…";
       history.push({ role: "assistant", content: answer });
       saveConv();
       typeOut(botBody, answer);
       if (voiceOn) speak(answer, botSpk); // 자동 읽기 ON이면 음성 재생
+      if (stgNow) renderSuggestions(stgNow);
+      // 하이브리드 전환: 모델이 목표 달성을 신호하면 다음 단계로(잠깐 뒤 새 오프닝 발화)
+      if (advance && stgNow && stgNow.next) { goToStage(stgNow.next, { announce: true }); }
       maybeExtractMemory();               // 주기 도달 시 최근 window에서 자동 추출 (백그라운드)
     })
     .catch(function (e) {
@@ -1131,13 +1330,40 @@
     }
     if (c === "/대화지우기" || c === "/대화초기화") {
       clearConv();
-      showGreeting();
       mePlaceholder();
-      showSys("＊ 대화를 초기화했어요. (컨셉 메모는 그대로 남아있어요) 다시 인사해보세요.");
+      if (scenarioOn()) { updateProgress(); deliverOpening(currentStage()); }
+      else { showGreeting(); }
+      showSys("＊ 대화를 초기화했어요. (컨셉 메모는 그대로 남아있어요)");
+      return;
+    }
+    // ----- 미션 명령 (시나리오 있을 때) -----
+    if (c === "/미션" || c === "/mission") {
+      if (!scenarioOn()) { showSys("＊ 이 캐릭터는 아직 미션 시나리오가 없어요(자유 대화)."); return; }
+      var s = currentStage(), p = stageProgress();
+      showSys("＊ 미션: " + (SCENARIO.title || persona.name) + "\n＊ 현재 단계: "
+        + (s ? (s.spot || s.label) : "-") + " (거점 " + p.i + "/" + p.n + ")\n＊ 목표: " + (s && s.goal ? s.goal : "-"));
+      return;
+    }
+    if (c === "/다음" || c === "/next" || c === "/스킵") {
+      if (!scenarioOn()) { showSys("＊ 미션 시나리오가 없어요."); return; }
+      var st = currentStage();
+      if (st && st.next) { showSys("＊ 다음 장소로 이동합니다."); goToStage(st.next, { announce: true, delay: 200 }); }
+      else { showSys("＊ 마지막 단계예요. (/처음 으로 다시 시작)"); }
+      return;
+    }
+    if (c === "/처음" || c === "/미션처음" || c === "/restart") {
+      if (!scenarioOn()) { showSys("＊ 미션 시나리오가 없어요."); return; }
+      clearConv();                 // stageId 를 start 로 되돌림
+      mePlaceholder(); updateProgress();
+      deliverOpening(currentStage());
+      showSys("＊ 미션을 처음부터 다시 시작해요.");
       return;
     }
     if (c === "/도움" || c === "/help" || c === "/?") {
-      showSys("＊ 명령: /메모 (컨셉 메모 보기)   /메모내보내기   /메모지우기   /대화지우기\n＊ 🎙️ 마이크를 꾹 눌러 말하거나, 아래 칸에 입력하고 엔터.");
+      var base = "＊ 명령: /메모  /메모내보내기  /메모지우기  /대화지우기";
+      if (scenarioOn()) base += "\n＊ 미션: /미션(현재 단계)  /다음(다음 장소)  /처음(처음부터)";
+      base += "\n＊ 🎙️ 마이크를 꾹 눌러 말하거나, 아래 칸에 입력하고 엔터.";
+      showSys(base);
       return;
     }
     addMsg("sys", "", "＊ 모르는 명령이에요. /도움 을 쳐보세요.");
