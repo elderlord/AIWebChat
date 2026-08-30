@@ -957,12 +957,15 @@
       : "거점 " + p.i + "/" + p.n + (where ? " · " + where : "");
   }
 
-  // 추천 답변 칩 렌더 (탭하면 그 말이 전송). 하이브리드: '다음 장소로 ▶' 버튼도 함께.
-  function renderSuggestions(stage) {
+  // 추천(예상) 답변 칩 렌더 — 최대 2개. dynList(모델이 제안한 예상답변) 우선, 없으면 시나리오 기본칩.
+  //  탭하면 그 말이 전송. 하이브리드: '다음 장소로 ▶' 버튼도 함께(시나리오 단계일 때).
+  function renderSuggestions(stage, dynList) {
     if (!suggestEl) return;
     suggestEl.innerHTML = "";
-    if (!scenarioOn() || !stage) return;
-    var list = Array.isArray(stage.suggest) ? stage.suggest : [];
+    var list = (dynList && dynList.length)
+      ? dynList
+      : (stage && Array.isArray(stage.suggest) ? stage.suggest : []);
+    list = list.slice(0, 2); // 예상 답변 2개까지만
     for (var i = 0; i < list.length; i++) {
       (function (txt) {
         var b = document.createElement("button");
@@ -973,7 +976,7 @@
       })(list[i]);
     }
     // 수동 전환 버튼 (다음 단계가 있고 종료 단계가 아닐 때)
-    if (stage.next && stage.kind !== "end") {
+    if (stage && stage.next && stage.kind !== "end") {
       var nb = document.createElement("button");
       nb.className = "chip next";
       nb.textContent = "다음 장소로 ▶";
@@ -983,12 +986,21 @@
   }
   function clearSuggestions() { if (suggestEl) suggestEl.innerHTML = ""; }
 
-  // 답변 끝의 숨은 진행 신호 [[NEXT]] 를 떼어낸다 → {text, advance}
-  function stripNextSignal(text) {
+  // 답변 끝의 숨은 제어 신호 분리: [[NEXT]](다음 단계), [[SUGGEST: a | b]](예상답변 2개)
+  //  → {text(정리된 표시용), advance, suggests[]}
+  function parseControls(text) {
     var t = String(text || "");
     var advance = /\[\[\s*NEXT\s*\]\]/i.test(t);
-    if (advance) t = t.replace(/\[\[\s*NEXT\s*\]\]/ig, "").replace(/\s+$/,"").trim();
-    return { text: t, advance: advance };
+    if (advance) t = t.replace(/\[\[\s*NEXT\s*\]\]/ig, "");
+    var suggests = [];
+    var m = t.match(/\[\[\s*SUGGEST\s*:([^\]]*)\]\]/i);
+    if (m) {
+      suggests = m[1].split("|").map(function (x) { return x.trim(); })
+        .filter(function (x) { return x.length > 0; }).slice(0, 2);
+      t = t.replace(/\[\[\s*SUGGEST\s*:[^\]]*\]\]/ig, "");
+    }
+    t = t.replace(/\s+$/, "").trim();
+    return { text: t, advance: advance, suggests: suggests };
   }
 
   // 캐릭터가 먼저 말을 건다 (단계 진입 시 능동 발화)
@@ -1213,6 +1225,11 @@
       }
       sys.push({ role: "system", content: lines.join("\n") });
     }
+    // 예상 답변(관람객이 다음에 할 만한 말) 2개를 매 답변마다 함께 제안 → 화면에서 선택 칩이 됨
+    sys.push({
+      role: "system",
+      content: "[예상답변] 답변의 맨 끝에, 관람객이 곧바로 할 만한 짧은 대답 2개를 정확히 이 형식으로 붙여라: [[SUGGEST: 답1 | 답2]]. 각 6~16자, 관람객(1인칭·반말) 말투로, 서로 다른 방향(예: 질문 하나 + 행동/동의 하나)으로 만들어라. 이 표시는 화면에서 선택 버튼으로 바뀌니 대사 본문에는 절대 노출하지 마라."
+    });
 
     var body = {
       passphrase: passphrase,
@@ -1255,17 +1272,18 @@
         showSys("응답을 해독하지 못했습니다. (빈 응답)", true);
         return;
       }
-      // 미션 진행 신호 [[NEXT]] 분리 (화면·기록엔 표시 안 함)
-      var advance = false, stgNow = scenarioOn() ? currentStage() : null;
-      if (stgNow) { var parsed = stripNextSignal(answer); answer = parsed.text; advance = parsed.advance; }
-      if (!answer) answer = "…";
+      // 숨은 제어 신호 분리: [[NEXT]](다음 단계) · [[SUGGEST: a|b]](예상답변)  — 화면·기록엔 표시 안 함
+      var stgNow = scenarioOn() ? currentStage() : null;
+      var ctrl = parseControls(answer);
+      answer = ctrl.text || "…";
       history.push({ role: "assistant", content: answer });
       saveConv();
       typeOut(botBody, answer);
       if (voiceOn) speak(answer, botSpk); // 자동 읽기 ON이면 음성 재생
-      if (stgNow) renderSuggestions(stgNow);
+      // 예상답변 칩(모델 제안 우선, 없으면 단계 기본칩)
+      renderSuggestions(stgNow, ctrl.suggests);
       // 하이브리드 전환: 모델이 목표 달성을 신호하면 다음 단계로(잠깐 뒤 새 오프닝 발화)
-      if (advance && stgNow && stgNow.next) { goToStage(stgNow.next, { announce: true }); }
+      if (ctrl.advance && stgNow && stgNow.next) { goToStage(stgNow.next, { announce: true }); }
       maybeExtractMemory();               // 주기 도달 시 최근 window에서 자동 추출 (백그라운드)
     })
     .catch(function (e) {
